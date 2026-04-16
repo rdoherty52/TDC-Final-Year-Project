@@ -1,57 +1,72 @@
-# -------------------------------------------------------------------------
-# 1. Configuration & Voltage
-# -------------------------------------------------------------------------
+##############################################################################
+# File:        tdc_constraints.xdc
+# Author:      Rowan Doherty
+# Date:        April 2026
+#
+# Description: Placement and I/O constraints for the FPGA-based TDC on the
+#              Xilinx Kintex-7 KC705 evaluation board.
+#
+#              Covers:
+#                - Device configuration and I/O voltage
+#                - Differential 200 MHz system clock input (SYSCLK)
+#                - HIT differential input (USER_SMA_CLOCK_P/N)
+#                - CPU reset pushbutton
+#                - USB-UART transmit pin
+#                - IDELAY / IDELAYCTRL group tagging
+#                - Explicit placement of the edge-detector flip-flops
+#                - Explicit LOC and BEL constraints for every CARRY4 cell and
+#                  its four stage-1 sampling flip-flops (90 cells, 360 taps)
+#
+#              The carry chain occupies column X20 from Y150 to Y239, which
+#              spans clock regions X0Y3 and X0Y4. Manual placement is
+#              essential for reproducibility across synthesis runs and for
+#              consistent bin-width behaviour along the delay line.
+##############################################################################
+
+# -----------------------------------------------------------------------------
+# 1. Configuration and I/O voltage
+# -----------------------------------------------------------------------------
 set_property CFGBVS VCCO [current_design]
 set_property CONFIG_VOLTAGE 2.5 [current_design]
 
-# -------------------------------------------------------------------------
-# 2. Clocking (Differential 200MHz - KC705)
-# -------------------------------------------------------------------------
-set_property PACKAGE_PIN AD12 [get_ports iCLK_p]
-set_property PACKAGE_PIN AD11 [get_ports iCLK_n]
-set_property IOSTANDARD DIFF_SSTL15 [get_ports iCLK_p]
-set_property IOSTANDARD DIFF_SSTL15 [get_ports iCLK_n]
+# -----------------------------------------------------------------------------
+# 2. Differential 200 MHz system clock (SYSCLK_P/N on KC705)
+#    The Clocking Wizard generates the 300 MHz system clock and all phase
+#    offsets from this source.
+# -----------------------------------------------------------------------------
+set_property PACKAGE_PIN AD12       [get_ports iCLK_p]
+set_property PACKAGE_PIN AD11       [get_ports iCLK_n]
+set_property IOSTANDARD  DIFF_SSTL15 [get_ports iCLK_p]
+set_property IOSTANDARD  DIFF_SSTL15 [get_ports iCLK_n]
 
-#create_clock -period 5.000 -name sys_clk [get_ports iCLK_p]
+# -----------------------------------------------------------------------------
+# 3. HIT input, reset pushbutton, UART transmit pin
+# -----------------------------------------------------------------------------
+# HIT - differential LVDS on USER_SMA_CLOCK_P/N
+set_property PACKAGE_PIN L25 [get_ports iHIT_P]
+set_property PACKAGE_PIN K25 [get_ports iHIT_N]
+set_property IOSTANDARD  LVDS_25 [get_ports {iHIT_P iHIT_N}]
 
-# -------------------------------------------------------------------------
-# 3. Pushbuttons (HIT and RESET)
-# -------------------------------------------------------------------------
-# Center Pushbutton (GPIO_SW_C) for HIT
-#set_property PACKAGE_PIN R19 [get_ports iHIT]
-#set_property IOSTANDARD LVCMOS25 [get_ports iHIT]
-
-# Center Pushbutton (GPIO_SW_C) for HIT
-#set_property PACKAGE_PIN G12 [get_ports iHIT]
-#set_property IOSTANDARD LVCMOS25 [get_ports iHIT]
-set_property PACKAGE_PIN L25 [get_ports iHIT_P]   ;# USER_SMA_CLOCK_P
-set_property PACKAGE_PIN K25 [get_ports iHIT_N]   ;# USER_SMA_CLOCK_N
-set_property IOSTANDARD LVDS_25 [get_ports {iHIT_P iHIT_N}]
-# South Pushbutton (GPIO_SW_S) for RST
+# Reset - GPIO_SW_S (south pushbutton)
 set_property PACKAGE_PIN AB7 [get_ports iRST]
-set_property IOSTANDARD LVCMOS15 [get_ports iRST]
+set_property IOSTANDARD  LVCMOS15 [get_ports iRST]
 
-
+# UART transmit to USB-UART bridge
 set_property PACKAGE_PIN K24 [get_ports oUART_TXD]
-set_property IOSTANDARD LVCMOS25 [get_ports oUART_TXD]
-# -------------------------------------------------------------------------
-# 4. IDELAY & IDELAYCTRL Grouping (Fixes [DRC PLIDC-10])
-# -------------------------------------------------------------------------
+set_property IOSTANDARD  LVCMOS25 [get_ports oUART_TXD]
+
+# -----------------------------------------------------------------------------
+# 4. IDELAY / IDELAYCTRL group tagging
+#    Fixes DRC PLIDC-10 by tying the IDELAYCTRL to its IDELAY consumer.
+# -----------------------------------------------------------------------------
 set_property IODELAY_GROUP tdc_delay_grp [get_cells u_tdc/u_idelay_hit]
 set_property IODELAY_GROUP tdc_delay_grp [get_cells u_tdc/u_idelayctrl]
-# -------------------------------------------------------------------------
-# 5. TDC Placement (Column X20)
-# -------------------------------------------------------------------------
-# -------------------------------------------------------------------------
-# TDC Carry Chain and Sampling FF Placement Constraints
-# KC705 Kintex-7 - Column X20, Y150 to Y249 (clock region X0Y3)
-# 100 CARRY4 blocks, 4 sampling FFs co-located in same slice as CARRY4
-# Entire chain within single clock region - no boundary crossing
-# -------------------------------------------------------------------------
-# 5. Edge detector placement - column X12, below delay chain
-# -------------------------------------------------------------------------
 
-# Edge detectors near start of delay chain (chain starts at X20Y150)
+# -----------------------------------------------------------------------------
+# 5. Edge detector placement
+#    Placed in column X21, adjacent to the start of the delay chain, so the
+#    hit signal fan-out paths to each detector are as short as possible.
+# -----------------------------------------------------------------------------
 set_property LOC SLICE_X21Y150 [get_cells {u_tdc/rCoarseEdgeDet_reg[0]}]
 set_property LOC SLICE_X21Y150 [get_cells {u_tdc/rCoarseEdgeDet_reg[1]}]
 
@@ -60,9 +75,13 @@ set_property LOC SLICE_X21Y151 [get_cells {u_tdc/rArb1EdgeDet_reg[1]}]
 
 set_property LOC SLICE_X21Y152 [get_cells {u_tdc/rArb2EdgeDet_reg[0]}]
 set_property LOC SLICE_X21Y152 [get_cells {u_tdc/rArb2EdgeDet_reg[1]}]
-# -------------------------------------------------------------------------
-# Each clock domain gets its own slice
-# CLK0 coarse edge detector
+
+# -----------------------------------------------------------------------------
+# 6. CARRY4 delay chain and stage-1 sampling flip-flop placement
+#    90 CARRY4 cells chained vertically in column X20 from Y150 to Y239.
+#    Each cell is co-located with its four stage-1 sampling flip-flops in
+#    the same slice (BELs AFF, BFF, CFF, DFF).
+# -----------------------------------------------------------------------------
 
 # CARRY4 block 0 - taps 0 to 3
 set_property LOC SLICE_X20Y150 [get_cells {u_tdc/fine_inst/generate_block[0].carry4_1}]
@@ -1163,5 +1182,4 @@ set_property BEL DFF [get_cells {u_tdc/fine_inst/stage1[359].rTDCVALUE}]
 #set_property BEL CFF [get_cells {u_tdc/fine_inst/stage1[398].rTDCVALUE}]
 #set_property LOC SLICE_X20Y249 [get_cells {u_tdc/fine_inst/stage1[399].rTDCVALUE}]
 #set_property BEL DFF [get_cells {u_tdc/fine_inst/stage1[399].rTDCVALUE}]
-
 
